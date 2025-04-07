@@ -1,7 +1,7 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using GestionTicketsAPI.Extensions;
 using GestionTicketsAPI.Middleware;
+ 
 using Hangfire;
 using Hangfire.MySql;
 using OfficeOpenXml;
@@ -9,19 +9,8 @@ using OfficeOpenXml;
 
 var builder = WebApplication.CreateBuilder(args);
 
-
-
-// Add services to the container.
-builder.Services.AddHangfire(configuration =>
-{
-    configuration.UseStorage(
-        new MySqlStorage(builder.Configuration.GetConnectionString("DefaultConnection"), new MySqlStorageOptions
-        {
-            TablesPrefix = "Hangfire" // Préfixe pour les tables de Hangfire
-        })
-    );
-});
-builder.Services.AddHangfireServer();
+  
+ 
 builder.Services.AddApplicationServices(builder.Configuration);
 builder.Services.AddIdentityServices(builder.Configuration);
 builder.Services.AddControllers()
@@ -30,14 +19,30 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
     });
 
-var app = builder.Build();
+// Configuration des CORS
+var allowedOrigins = new string[]
+{
+    "http://localhost:8040"
+};
 
-app.UseCors(x => x.AllowAnyHeader().AllowAnyMethod().WithOrigins("http://localhost:8040", "https://localhost:8040", "http://localhost:4200/").WithExposedHeaders("Pagination"));
- 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowSpecificOrigins",
+        policy =>
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        });
+});
+
+
+var app = builder.Build();
 
 app.MapGet("/", () => "Bienvenue dans l'API GestionTicketsAPI !");
 
-// Configure the HTTP request pipeline.
+// Middleware d'exception
 app.UseMiddleware<ExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -46,11 +51,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// 🚀 **Place UseCors ici, avant Authentication et Authorization**
+app.UseCors("AllowSpecificOrigins");
+
 app.UseHttpsRedirection();
-
-
 app.UseStaticFiles();
-
 app.UseAuthentication();
 app.UseAuthorization();
 

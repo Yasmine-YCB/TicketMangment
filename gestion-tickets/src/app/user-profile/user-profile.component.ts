@@ -152,18 +152,18 @@ export class UserProfileComponent implements OnInit {
 
     // Récupérer toutes les valeurs (même celles désactivées)
     const updatedUser: User = this.userForm.getRawValue();
-    this.accountService.updateUser(updatedUser).subscribe({
-      next: () => {
+    this.accountService.updateUser(updatedUser).subscribe(
+      (res) => {
         this.userDetails = { ...this.userDetails, ...updatedUser };
         this.toastr.success("Mise à jour effectuée avec succès.");
         this.loaderService.hideLoader();
       },
-      error: (error) => {
+     (error) => {
         console.error("Erreur lors de la mise à jour", error);
         this.toastr.error("Erreur lors de la mise à jour", error);
         this.loaderService.hideLoader();
       }
-    });
+    );
   }
 
   onCancel(): void {

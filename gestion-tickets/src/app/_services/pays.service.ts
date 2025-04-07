@@ -15,11 +15,11 @@ export class PaysService {
   // Méthode pour récupérer les pays, avec possibilité de recherche
   getPays(searchTerm?: string): Observable<Pays[]> {
     const body = { searchTerm: searchTerm || '' };
-    return this.http.post<Pays[]>(`${this.baseUrl}/pays/getPays`, body).pipe(
+    return this.http.post<Pays[]>(`${this.baseUrl}pays/getPays`, body).pipe(
       map(paysList =>
         paysList.map(pays => {
           if (pays.photoUrl) {
-            pays.photoUrl = this.baseUrl +pays.photoUrl.replace(/\\/g, '/');
+            pays.photoUrl = `http://localhost:8055/${pays.photoUrl.replace(/\\/g, '/')}`;
           }
           return pays;
         })
