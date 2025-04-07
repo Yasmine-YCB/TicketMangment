@@ -19,7 +19,7 @@ export class PaysService {
       map(paysList =>
         paysList.map(pays => {
           if (pays.photoUrl) {
-            pays.photoUrl = `https://localhost:5001/${pays.photoUrl.replace(/\\/g, '/')}`;
+            pays.photoUrl = this.baseUrl +pays.photoUrl.replace(/\\/g, '/');
           }
           return pays;
         })

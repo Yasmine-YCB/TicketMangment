@@ -2,7 +2,6 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { Observable, map } from 'rxjs';
 import { CategorieProbleme } from '../_models/categorie-probleme.model';
-import { PaginatedResult } from '../_models/pagination';
 import { environment } from '../../environment/environment';
 import { PaginatedResult, Pagination } from '../_models/pagination';
 
@@ -33,7 +32,7 @@ export class CategorieProblemeService {
       ...extraFilters
     };
   
-    return this.http.post<any>(`${this.baseUrl}/paged`, params, { observe: 'response' })
+    return this.http.post<any>(`${this.baseUrl}paged`, params, { observe: 'response' })
       .pipe(
         map((response: HttpResponse<CategorieProbleme[]>) => {
           const paginationHeader = response.headers.get('Pagination');
@@ -73,6 +72,6 @@ export class CategorieProblemeService {
   }
 
   exportCategories(): Observable<Blob> {
-    return this.http.get(`${this.baseUrl}/export`, { responseType: 'blob' });
+    return this.http.get(`${this.baseUrl}export`, { responseType: 'blob' });
   }
 }
