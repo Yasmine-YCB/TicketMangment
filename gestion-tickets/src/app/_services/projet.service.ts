@@ -2,9 +2,9 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
 import { map, Observable } from 'rxjs';
 import { Projet } from '../_models/Projet';
-import { ProjetMember } from '../_models/projet-member';
-import { PaginatedResult } from '../_models/pagination';
+import { ProjetMember } from '../_models/projet-member'; 
 import { environment } from '../../environment/environment';
+import { PaginatedResult, Pagination } from '../_models/pagination';
 
 @Injectable({
   providedIn: 'root'
@@ -16,45 +16,37 @@ export class ProjetService {
   constructor(private http: HttpClient) { }
 
   // Récupérer tous les projets
-  getProjets(): Observable<Projet[]> {
-    return this.http.get<Projet[]>(`${this.baseUrl}`);
+  getProjets(filters: any): Observable<Projet[]> {
+    return this.http.post<Projet[]>(`${this.baseUrl}search`, filters);
   }
 
-   // Méthode pour récupérer les projets paginés
-   getPaginatedProjets(
-    pageNumber?: number,
-    pageSize?: number,
+  // Méthode pour récupérer les projets paginés
+  getPaginatedProjets(
+    pageNumber: number,
+    pageSize: number,
     searchTerm?: string,
-    societeId?: number
+    extraFilters?: any
   ): Observable<PaginatedResult<Projet[]>> {
-    let params = new HttpParams();
-    if (pageNumber != null && pageSize != null) {
-      params = params.append('pageNumber', pageNumber.toString());
-      params = params.append('pageSize', pageSize.toString());
-    }
-    if (searchTerm && searchTerm.trim() !== '') {
-      params = params.append('searchTerm', searchTerm);
-    }
-    if (societeId) {
-      params = params.append('societeId', societeId.toString());
-    }
+    const params = {
+      pageNumber,
+      pageSize,
+      searchTerm: searchTerm ? searchTerm : '',
+      ...extraFilters
+    };
   
-    return this.http.get<Projet[]>(`${this.baseUrl}paged`, { observe: 'response', params })
+    return this.http.post<any>(this.baseUrl + 'paged', params, { observe: 'response' })
       .pipe(
         map((response: HttpResponse<Projet[]>) => {
+          const paginationHeader = response.headers.get('Pagination');
           const paginatedResult: PaginatedResult<Projet[]> = {
             items: response.body || [],
-            pagination: response.headers.get('Pagination')
-              ? JSON.parse(response.headers.get('Pagination')!)
-              : null!
+            pagination: paginationHeader ? JSON.parse(paginationHeader) : {} as Pagination
           };
           return paginatedResult;
         })
       );
   }
   
-  
-
   // Récupérer un projet par ID
   getProjetById(id: number): Observable<Projet> {
     return this.http.get<Projet>(`${this.baseUrl}${id}`);
@@ -95,7 +87,7 @@ export class ProjetService {
   getUserProjets(): Observable<Projet[]> {
     return this.http.get<Projet[]>(`${this.baseUrl}user`);
   }
-  
+
   // Assigner ou mettre à jour le rôle d'un utilisateur dans un projet
   assignerRole(projetId: number, userId: number, role: string): Observable<any> {
     // Ici, selon votre API, vous pouvez soit utiliser un endpoint dédié (par exemple assigner-role)
@@ -110,7 +102,7 @@ export class ProjetService {
   supprimerUtilisateurDuProjet(projetId: number, userId: number): Observable<void> {
     return this.http.delete<void>(`${this.baseUrl}${projetId}/utilisateurs/${userId}`);
   }
-  
+
 
   deleteSelectedProjectMembers(projetId: number, userIds: number[]): Observable<any> {
     // On utilise http.request('delete') pour envoyer un body avec la méthode DELETE.
@@ -120,7 +112,11 @@ export class ProjetService {
   }
 
   getProjetsBySocieteId(societeId: number): Observable<Projet[]> {
-    return this.http.get<Projet[]>(`${this.baseUrl}/societe/${societeId}`);
+    return this.http.get<Projet[]>(`${this.baseUrl}societe/${societeId}`);
   }
-  
+
+  exportProjets(filters: any): Observable<Blob> {
+    return this.http.post(`${this.baseUrl}export`, filters, { responseType: 'blob' });
+  }
+
 }

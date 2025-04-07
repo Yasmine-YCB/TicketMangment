@@ -9,22 +9,23 @@ using GestionTicketsAPI.Services;
 using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
+using ClosedXML.Excel;
 
 namespace GestionTicketsAPI.Controllers
 {
   [ApiController]
-  [Route("api/[controller]")]
-  public class TicketsController : ControllerBase
+  public class TicketsController : BaseApiController
   {
     private readonly ITicketService _ticketService;
     private readonly IMapper _mapper;
     private readonly IPhotoService _photoService;
     private readonly EmailService _emailService;
-
     private readonly IUserService _userService;
     private readonly ICommentService _commentService;
+    private readonly ExcelExportServiceClosedXML _excelExportService;
+    private readonly IWebHostEnvironment _env;
 
-    public TicketsController(ITicketService ticketService, IMapper mapper, IPhotoService photoService, IUserService userService, EmailService emailService, ICommentService commentService)
+    public TicketsController(IWebHostEnvironment env, ExcelExportServiceClosedXML excelExportService, ITicketService ticketService, IMapper mapper, IPhotoService photoService, IUserService userService, EmailService emailService, ICommentService commentService)
     {
       _ticketService = ticketService;
       _mapper = mapper;
@@ -32,22 +33,24 @@ namespace GestionTicketsAPI.Controllers
       _userService = userService;
       _emailService = emailService;
       _commentService = commentService;
+      _excelExportService = excelExportService;
+      _env = env;
     }
 
     // GET api/tickets?...
-    [HttpGet]
-    public async Task<ActionResult<IEnumerable<TicketDto>>> GetTickets([FromQuery] UserParams ticketParams)
+    [HttpPost("paged")]
+    public async Task<ActionResult<IEnumerable<TicketDto>>> GetTickets([FromBody] TicketFilterParams filterParams)
     {
-      // Extraction des informations de l'utilisateur connecté via les claims
       var userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
       var roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
       if (userIdClaim != null && roleClaim != null)
       {
-        ticketParams.UserId = int.Parse(userIdClaim.Value);
-        ticketParams.Role = roleClaim.Value;
+        filterParams.UserId = int.Parse(userIdClaim.Value);
+        filterParams.Role = roleClaim.Value;
       }
 
-      var pagedTickets = await _ticketService.GetTicketsPagedAsync(ticketParams);
+      var pagedTickets = await _ticketService.GetTicketsPagedAsync(filterParams);
+
       var pagination = new
       {
         currentPage = pagedTickets.CurrentPage,
@@ -70,50 +73,55 @@ namespace GestionTicketsAPI.Controllers
 
     // POST api/tickets
     [HttpPost]
-    public async Task<ActionResult<TicketDto>> CreateTicket([FromForm] TicketCreateDto ticketCreateDto)
+    public async Task<ActionResult<TicketDto>> CreateTicket([FromBody] TicketCreateDto ticketCreateDto)
     {
-      // Vérification de l'unicité du titre du ticket
       if (await _ticketService.TicketExists(ticketCreateDto.Title))
         return BadRequest("Un ticket avec ce titre existe déjà");
 
-      UploadResult uploadResult = null;
-      if (ticketCreateDto.Attachment != null)
+      // Variable pour stocker l'URL de l'attachement enregistré localement
+      string attachmentUrl = null;
+
+      if (!string.IsNullOrEmpty(ticketCreateDto.AttachmentBase64) && !string.IsNullOrEmpty(ticketCreateDto.AttachmentFileName))
       {
-        uploadResult = await _photoService.UploadFileAsync(ticketCreateDto.Attachment);
-        if (uploadResult?.Error != null)
-          return BadRequest(uploadResult.Error.Message);
+        byte[] fileBytes = Convert.FromBase64String(ticketCreateDto.AttachmentBase64);
+        string assetsPath = Path.Combine(_env.WebRootPath, "assets");
+        if (!Directory.Exists(assetsPath))
+        {
+          Directory.CreateDirectory(assetsPath);
+        }
+        string fileName = $"{Guid.NewGuid()}_{ticketCreateDto.AttachmentFileName}";
+        string filePath = Path.Combine(assetsPath, fileName);
+        await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+
+        // Utilisation d'une URL absolue
+        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+        attachmentUrl = $"{baseUrl}/assets/{fileName}";
       }
 
-      // Mapper le DTO vers l'entité Ticket et définir la date de création
+
       var ticket = _mapper.Map<Ticket>(ticketCreateDto);
       ticket.CreatedAt = DateTime.UtcNow;
       ticket.UpdatedAt = null;
 
-      // Récupération du statut par défaut depuis la table des statuts
       var defaultStatus = await _ticketService.GetStatusByNameAsync("—");
       if (defaultStatus == null)
         return BadRequest("Statut par défaut introuvable");
       ticket.StatutId = defaultStatus.Id;
 
-      if (uploadResult?.SecureUrl != null)
+      if (!string.IsNullOrEmpty(attachmentUrl))
       {
-        ticket.Attachments = uploadResult.SecureUrl.AbsoluteUri;
+        ticket.Attachments = attachmentUrl;
       }
 
-      // Ajout du ticket dans le repository
       await _ticketService.AddTicketAsync(ticket);
       await _ticketService.SaveAllAsync();
 
-      // Recharger le ticket avec ses relations (incluant Projet et ChefProjet)
       var ticketFromDb = await _ticketService.GetTicketByIdAsync(ticket.Id);
       if (ticketFromDb == null)
       {
         return NotFound();
       }
 
-      // Envoi d'e-mails en tâche de fond via Hangfire
-
-      // Envoi d'email au chef de projet s'il existe
       var chefProjet = ticketFromDb.Projet?.ChefProjet;
       if (chefProjet != null)
       {
@@ -126,7 +134,6 @@ namespace GestionTicketsAPI.Controllers
         ));
       }
 
-      // Envoi d'email de confirmation au client (celui qui a créé le ticket)
       var client = ticketFromDb.Owner;
       if (client != null)
       {
@@ -139,7 +146,6 @@ namespace GestionTicketsAPI.Controllers
         ));
       }
 
-      // Envoi d'email aux utilisateurs ayant le rôle 'super admin'
       var superAdmins = await _userService.GetUsersByRoleAsync("super admin");
       foreach (var admin in superAdmins)
       {
@@ -157,16 +163,13 @@ namespace GestionTicketsAPI.Controllers
     }
 
 
-
     [HttpPost("validate/{id}")]
     public async Task<IActionResult> ValidateTicket(int id, [FromBody] TicketValidationDto ticketValidationDto)
     {
-      // Récupération du ticket à valider
       var ticket = await _ticketService.GetTicketEntityByIdAsync(id);
       if (ticket == null)
         return NotFound("Ticket non trouvé");
 
-      // Vérification de l'authentification
       var currentUserIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
       var currentUserRoleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
       if (currentUserIdClaim == null || currentUserRoleClaim == null)
@@ -185,7 +188,6 @@ namespace GestionTicketsAPI.Controllers
 
       if (ticketValidationDto.IsAccepted)
       {
-        // Si accepté, rechercher le statut "Accepté"
         var acceptedStatus = await _ticketService.GetStatusByNameAsync("Accepté");
         if (acceptedStatus == null)
           return BadRequest("Statut 'Accepté' introuvable");
@@ -193,7 +195,6 @@ namespace GestionTicketsAPI.Controllers
         ticket.StatutId = acceptedStatus.Id;
         ticket.ApprovedAt = DateTime.UtcNow;
 
-        // Envoi d'email d'acceptation au client en tâche de fond
         var client = ticket.Owner;
         if (client != null)
         {
@@ -206,7 +207,6 @@ namespace GestionTicketsAPI.Controllers
           ));
         }
 
-        // Si un responsable est assigné, on met à jour le statut et on envoie un email au responsable
         if (ticketValidationDto.ResponsibleId.HasValue)
         {
           ticket.ResponsibleId = ticketValidationDto.ResponsibleId.Value;
@@ -230,7 +230,6 @@ namespace GestionTicketsAPI.Controllers
       }
       else
       {
-        // Si refusé, rechercher le statut "Refusé" et envoyer un email de refus au client
         var refusedStatus = await _ticketService.GetStatusByNameAsync("Refusé");
         if (refusedStatus == null)
           return BadRequest("Statut 'Refusé' introuvable");
@@ -258,11 +257,9 @@ namespace GestionTicketsAPI.Controllers
       return BadRequest("La validation du ticket a échoué");
     }
 
-
-
     // Endpoint pour l'upload du fichier en arrière-plan
     [HttpPost("upload")]
-    public async Task<IActionResult> UploadFile([FromForm] IFormFile file)
+    public async Task<IActionResult> UploadFile([FromBody] IFormFile file)
     {
       var uploadResult = await _photoService.UploadFileAsync(file);
       if (uploadResult == null || uploadResult.Error != null)
@@ -296,17 +293,13 @@ namespace GestionTicketsAPI.Controllers
       return BadRequest("La suppression des tickets a échoué.");
     }
 
-
-
     [HttpPost("finish/{id}")]
     public async Task<IActionResult> FinishTicket(int id, [FromBody] TicketCompletionDto completionDto)
     {
-      // Récupération du ticket
       var ticket = await _ticketService.GetTicketEntityByIdAsync(id);
       if (ticket == null)
         return NotFound("Ticket non trouvé");
 
-      // Vérification de l'authentification et de l'autorisation
       var currentUserIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
       var currentUserRoleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
       if (currentUserIdClaim == null || currentUserRoleClaim == null)
@@ -326,7 +319,6 @@ namespace GestionTicketsAPI.Controllers
       if (!isAuthorized)
         return Unauthorized("Vous n'êtes pas autorisé à terminer ce ticket.");
 
-      // Détermination du nouveau statut
       var newStatusName = completionDto.IsResolved ? "Résolu" : "Non Résolu";
       var newStatus = await _ticketService.GetStatusByNameAsync(newStatusName);
       if (newStatus == null)
@@ -341,14 +333,10 @@ namespace GestionTicketsAPI.Controllers
       if (!updateResult)
         return BadRequest("La clôture du ticket a échoué");
 
-      // Construction du texte du commentaire s'il existe
       string commentText = !string.IsNullOrWhiteSpace(completionDto.Comment)
                              ? $" Commentaire : {completionDto.Comment}"
                              : "";
 
-      // Envoi d'emails aux différents destinataires en tâche de fond
-
-      // Email au client (Owner)
       if (ticket.Owner != null)
       {
         BackgroundJob.Enqueue(() => _emailService.SendEmailAsync(
@@ -360,7 +348,6 @@ namespace GestionTicketsAPI.Controllers
         ));
       }
 
-      // Email au chef de projet
       if (ticket.Projet?.ChefProjet != null)
       {
         BackgroundJob.Enqueue(() => _emailService.SendEmailAsync(
@@ -372,7 +359,6 @@ namespace GestionTicketsAPI.Controllers
         ));
       }
 
-      // Email au responsable assigné
       if (ticket.Responsible != null)
       {
         BackgroundJob.Enqueue(() => _emailService.SendEmailAsync(
@@ -384,7 +370,6 @@ namespace GestionTicketsAPI.Controllers
         ));
       }
 
-      // Email à tous les super admins
       var superAdmins = await _userService.GetUsersByRoleAsync("super admin");
       foreach (var admin in superAdmins)
       {
@@ -397,7 +382,6 @@ namespace GestionTicketsAPI.Controllers
         ));
       }
 
-      // Création automatique d'un commentaire
       string resolutionStatus = completionDto.IsResolved ? "résolu" : "non résolu";
       string commentContent = $"Votre ticket est {resolutionStatus}.<br>" +
                               $"Date de début : {ticket.CreatedAt:dd/MM/yyyy HH:mm}<br>" +
@@ -419,9 +403,6 @@ namespace GestionTicketsAPI.Controllers
       return NoContent();
     }
 
-
-
-
     [HttpPost("updateResponsible/{id}")]
     public async Task<IActionResult> UpdateResponsible(int id, [FromBody] TicketResponsibleDto responsibleDto)
     {
@@ -429,7 +410,6 @@ namespace GestionTicketsAPI.Controllers
       if (ticket == null)
         return NotFound("Erreur : Ticket non trouvé.");
 
-      // Vérification de l'authentification et autorisation
       var currentUserIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
       var currentUserRoleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
       if (currentUserIdClaim == null || currentUserRoleClaim == null)
@@ -448,7 +428,6 @@ namespace GestionTicketsAPI.Controllers
       if (!isAuthorized)
         return Unauthorized("Erreur : Vous n'êtes pas autorisé à modifier le responsable.");
 
-      // Vérifier si le responsable a réellement changé
       if (ticket.ResponsibleId.HasValue && ticket.ResponsibleId.Value == responsibleDto.ResponsibleId)
       {
         return BadRequest("Erreur : Le responsable n'a pas été modifié.");
@@ -459,7 +438,6 @@ namespace GestionTicketsAPI.Controllers
       if (!updateResult)
         return BadRequest("Erreur : La mise à jour du responsable a échoué.");
 
-      // Envoi d'email au nouveau responsable en tâche de fond
       var responsible = await _userService.GetUserByIdAsync(ticket.ResponsibleId.Value);
       if (responsible != null)
       {
@@ -474,7 +452,6 @@ namespace GestionTicketsAPI.Controllers
 
       return NoContent();
     }
-
 
     [HttpGet("status-count")]
     public IActionResult GetTicketCountByStatus()
@@ -493,7 +470,25 @@ namespace GestionTicketsAPI.Controllers
       return Ok(result);
     }
 
+    [HttpPost("export")]
+    public async Task<IActionResult> ExportTickets([FromBody] TicketFilterParams filterParams)
+    {
+      var userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+      var roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
+      if (userIdClaim != null && roleClaim != null)
+      {
+        filterParams.UserId = int.Parse(userIdClaim.Value);
+        filterParams.Role = roleClaim.Value;
+      }
 
+      var tickets = await _ticketService.GetTicketsFilteredAsync(filterParams);
+      var ticketExportDtos = _mapper.Map<IEnumerable<TicketExportDto>>(tickets);
+      var content = _excelExportService.ExportToExcel(ticketExportDtos, "Tickets");
+
+      return File(content,
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          $"TicketsExport_{DateTime.Now:yyyyMMddHHmmss}.xlsx");
+    }
 
   }
 }

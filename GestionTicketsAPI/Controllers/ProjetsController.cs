@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using AutoMapper;
 using GestionTicketsAPI.DTOs;
 using GestionTicketsAPI.Extensions;
 using GestionTicketsAPI.Helpers;
@@ -7,38 +8,62 @@ using GestionTicketsAPI.Services;
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json;
 namespace GestionTicketsAPI.Controllers
 {
-  [Route("api/[controller]")]
   [ApiController]
   [Authorize]
   public class ProjetsController : BaseApiController
   {
     private readonly IProjetService _projetService;
     private readonly EmailService _emailService;
+    private readonly ExcelExportServiceClosedXML _excelExportService;
+    private readonly IMapper _mapper;
 
-    public ProjetsController(IProjetService projetService, EmailService emailService)
+    public ProjetsController(ExcelExportServiceClosedXML excelExportService, IMapper mapper, IProjetService projetService, EmailService emailService)
     {
       _projetService = projetService;
       _emailService = emailService;
+      _mapper = mapper;
+      _excelExportService = excelExportService;
     }
 
     // Récupérer tous les projets
-    [HttpGet]
-    public async Task<ActionResult<IEnumerable<ProjetDto>>> GetProjets()
+    [HttpPost("search")]
+    public async Task<ActionResult<IEnumerable<ProjetDto>>> GetProjects([FromBody] ProjectFilterParams filterParams)
     {
-      var projetsDto = await _projetService.GetProjetsAsync();
-      return Ok(projetsDto);
+      // Extraction des infos de l'utilisateur connecté
+      var userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+      var roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
+      if (userIdClaim != null && roleClaim != null)
+      {
+        filterParams.UserId = int.Parse(userIdClaim.Value);
+        filterParams.Role = roleClaim.Value.ToLower().Trim();
+      }
+
+      var pagedProjects = await _projetService.GetProjetsPagedAsync(filterParams);
+
+      var pagination = new
+      {
+        currentPage = pagedProjects.CurrentPage,
+        pageSize = pagedProjects.PageSize,
+        totalItems = pagedProjects.TotalCount,
+        totalPages = pagedProjects.TotalPages
+      };
+      Response.Headers["Pagination"] = JsonConvert.SerializeObject(pagination);
+      return Ok(pagedProjects);
     }
 
     // Récupérer les projets paginés
-    [HttpGet("paged")]
-    public async Task<ActionResult<PagedList<ProjetDto>>> GetProjetsPaged([FromQuery] UserParams projetParams)
+    [HttpPost("paged")]
+    public async Task<ActionResult<PagedList<ProjetDto>>> GetProjetsPaged([FromBody] ProjectFilterParams filterParams)
     {
-      var projetsPaged = await _projetService.GetProjetsPagedAsync(projetParams);
+      Console.WriteLine($"Role: {filterParams.Role}, UserId: {filterParams.UserId}");
+      var projetsPaged = await _projetService.GetProjetsPagedAsync(filterParams);
       Response.AddPaginationHeader(projetsPaged);
       return Ok(projetsPaged);
     }
+
 
     // Récupérer un projet par ID
     [HttpGet("{id}")]
@@ -79,15 +104,17 @@ namespace GestionTicketsAPI.Controllers
 
     // Mettre à jour un projet
     [HttpPut("modifierProjet/{id}")]
-    public async Task<IActionResult> PutProjet(int id, [FromBody] ProjetDto projetDto)
+    public async Task<IActionResult> PutProjet(int id, [FromBody] ProjetUpdateDto projetUpdateDto)
     {
-      if (id != projetDto.Id)
+      if (id != projetUpdateDto.Id)
         return BadRequest("L'ID du projet ne correspond pas.");
-      var result = await _projetService.UpdateProjetAsync(id, projetDto);
+
+      var result = await _projetService.UpdateProjetAsync(id, projetUpdateDto);
       if (!result)
         return NotFound();
       return NoContent();
     }
+
 
     // Supprimer un projet
     [HttpDelete("supprimerProjet/{id}")]
@@ -190,6 +217,25 @@ namespace GestionTicketsAPI.Controllers
       return Ok(projetsDto);
     }
 
+    [HttpPost("export")]
+    public async Task<IActionResult> ExportProjects([FromBody] ProjectFilterParams filterParams)
+    {
+      // Extraction des infos de l'utilisateur connecté
+      var userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+      var roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
+      if (userIdClaim != null && roleClaim != null)
+      {
+        filterParams.UserId = int.Parse(userIdClaim.Value);
+        filterParams.Role = roleClaim.Value;
+      }
+
+      var projects = await _projetService.GetProjetsFilteredAsync(filterParams);
+      var projectExportDtos = _mapper.Map<IEnumerable<ProjectExportDto>>(projects);
+      var content = _excelExportService.ExportToExcel(projectExportDtos, "Projects");
+      return File(content,
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          $"ProjectsExport_{DateTime.Now:yyyyMMddHHmmss}.xlsx");
+    }
 
   }
 }

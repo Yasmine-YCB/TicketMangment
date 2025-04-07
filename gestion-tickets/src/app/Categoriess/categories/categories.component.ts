@@ -8,6 +8,8 @@ import { CategorieModalComponent } from '../categorie-modal/categorie-modal.comp
 import { OverlayModalService } from '../../_services/overlay-modal.service';
 import { ToastrService } from 'ngx-toastr';
 import { ConfirmModalComponent } from '../../confirm-modal/confirm-modal.component';
+import { LoaderService } from '../../_services/loader.service';
+import { GlobalLoaderService } from '../../_services/global-loader.service';
 
 @Component({
     selector: 'app-categories',
@@ -18,6 +20,7 @@ import { ConfirmModalComponent } from '../../confirm-modal/confirm-modal.compone
 export class CategoriesComponent implements OnInit {
   categories: CategorieProbleme[] = [];
   searchTerm: string = '';
+  isLoading: boolean = false;
 
   // Pagination
   pageNumber: number = 1;
@@ -30,8 +33,14 @@ export class CategoriesComponent implements OnInit {
 
   constructor(private categorieService: CategorieProblemeService,
     private overlayModalService: OverlayModalService,
-    private toastr: ToastrService
-  ) { }
+    private toastr: ToastrService,
+    private loaderService: LoaderService,
+    private globalLoaderService: GlobalLoaderService
+  ) {
+    this.loaderService.isLoading$.subscribe((loading) => {
+      this.isLoading = loading;
+    });
+   }
 
   ngOnInit(): void {
     this.loadCategories();
@@ -39,6 +48,9 @@ export class CategoriesComponent implements OnInit {
 
   // Chargement paginé des catégories selon le terme de recherche
   loadCategories(): void {
+    // Affiche le loader global
+    this.globalLoaderService.showGlobalLoader();
+  
     this.categorieService.getCategoriesPaginated(this.pageNumber, this.pageSize, this.searchTerm)
       .subscribe({
         next: (response) => {
@@ -49,9 +61,17 @@ export class CategoriesComponent implements OnInit {
             this.totalPages = response.pagination.totalPages;
           }
         },
-        error: (err) => console.error('Erreur lors du chargement des catégories :', err)
+        error: (err) => {
+          console.error('Erreur lors du chargement des catégories :', err);
+          this.toastr.error("Erreur lors du chargement des catégories.");
+        },
+        complete: () => {
+          // Masque le loader global lorsque l'opération est terminée
+          this.globalLoaderService.hideGlobalLoader();
+        }
       });
   }
+  
 
   // Actualisation lors du changement du terme de recherche
   onSearchChange(): void {
@@ -80,10 +100,13 @@ export class CategoriesComponent implements OnInit {
     modalInstance.message = "Êtes-vous sûr de vouloir supprimer cette catégorie ?";
     
     modalInstance.confirmed.subscribe(() => {
+      this.loaderService.showLoader();
       this.categorieService.deleteCategory(id).subscribe({
         next: () =>{ this.toastr.success("Catégorie suprimée avec succèss"),
-                  this.loadCategories()},
-        error: (err) => console.error("Erreur lors de la suppression de la catégorie :", err)
+                  this.loadCategories(),
+                  this.loaderService.hideLoader();},
+        error: (err) => {console.error("Erreur lors de la suppression de la catégorie :", err);
+        this.loaderService.hideLoader();}
       });
       this.overlayModalService.close();
     });
@@ -209,6 +232,23 @@ export class CategoriesComponent implements OnInit {
     cat.editing = false;
   }
   
-
+  exportCategories(): void {
+    this.loaderService.showLoader();
+    this.categorieService.exportCategories().subscribe({
+      next: (blob: Blob) => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `CategoriesExport_${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}.xlsx`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        this.loaderService.hideLoader();
+      },
+      error: (error) => {
+        console.error("Erreur lors de l'export Excel des catégories", error);
+        this.loaderService.hideLoader();
+      }
+    });
+  }
 
 }

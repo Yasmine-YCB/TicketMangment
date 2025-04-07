@@ -161,7 +161,11 @@ select {
   background-position: calc(100% - 10px) center;
   padding-right: 30px;
 }
-
+select:focus {
+  outline: none;
+  border-color: #f57c00;
+  box-shadow: 0 0 0 2px rgba(245, 124, 0, 0.1);
+}
 .date-info {
   font-size: 14px;
   color: #666;
@@ -228,6 +232,10 @@ select {
   font-size: 0.98rem;
 }
 
+.my-comment-icon {
+  background-color: #bdbdbe; /* Par exemple, bleu pour vos messages */
+}
+
 .comment-info {
   display: flex;
   flex-direction: column;
@@ -255,7 +263,7 @@ select {
 .comment-content {
   margin: 0;
   color: #333;
-  font-size: 20px;
+  font-size: 17px;
   line-height: 1.4;
   padding-left: 49px;
   white-space: pre-wrap;
@@ -323,4 +331,22 @@ select {
 
 .send-button:hover {
   background-color: #e0700e;
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-top-color: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 5px;
+  margin-top: 5px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

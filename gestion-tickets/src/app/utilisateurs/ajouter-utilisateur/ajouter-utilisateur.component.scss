@@ -2,7 +2,7 @@
 .card-container {
   display: flex;
   justify-content: center;
-  padding: 1rem;
+  padding: 2rem;
 }
 
 .card {
@@ -10,7 +10,7 @@
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   width: 100%;
-  max-width: 1100px;
+  max-width: 1000px;
   overflow: hidden;
 }
 
@@ -255,6 +255,25 @@ input:checked + .toggle-label:before {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-top-color: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 5px;
+  margin-top: 5px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 
 /* ========== Responsive pour les tailles moyennes (768px à 1199px) ========== */
 @media (max-width: 1199px) {
