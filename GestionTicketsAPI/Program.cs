@@ -33,7 +33,7 @@ builder.Services.AddControllers()
 // Configuration des CORS
 var allowedOrigins = new string[]
 {
-    "http://localhost:8040"
+    "https://mgmt.simsoft.tn:8040"
 };
 
 builder.Services.AddCors(options =>
